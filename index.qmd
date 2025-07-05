@@ -1,0 +1,1009 @@
+
+---
+title: "Malaria Incidence and Urbanization Rate"
+author: "Cagla Korkmaz"
+format: dashboard
+theme: flatly
+---
+
+```{python}
+# Load libraries
+import pandas as pd
+import numpy as np
+import country_converter as cc
+import plotly.express as px
+import plotly.graph_objects as go
+import matplotlib.pyplot as plt
+```
+
+
+```{python}
+# Load the datasets
+mal_incidence = pd.read_csv("data/malaria_cases_per_100000_reported.csv")
+urban_per = pd.read_csv("data/urban_population_percent_of_total.csv")
+population = pd.read_csv("data/pop.csv")
+```
+
+# Home 
+
+**Purpose of the Dashboard**
+
+This dashboard presents a global exploration of the relationship between urbanization and malaria incidence over the period 1990–2005, using data sourced from Gapminder’s public datasets, which compile and harmonize data from official sources like the World Bank and WHO.
+
+**Indicators Used in the Dashboard**
+
+Urbanization is measured using the variable "urban_percent", which represents the percentage of a country’s population living in urban areas—a widely accepted indicator of urban development. 
+
+The selection of urban population percentage as the indicator for urbanization offers a reliable and comparable measure of the share of people living in urban areas across countries. This metric captures the degree of urban development, which is often linked to improvements in infrastructure, healthcare access, and vector control—factors that can influence malaria transmission.
+ 
+Malaria incidence is captured by the variable "malaria_incidence_per_100k", indicating the number of new malaria cases per 100,000 people per year. 
+
+These two indicators allow for standardized, cross-country comparisons over time and help reveal how changes in urban environments may influence the spread and control of malaria. 
+
+You can explore the full dataset on the [Gapminder Data Source](https://www.gapminder.org/data/).
+
+
+
+```{python}
+# Reshape Data
+
+# Convert datasets into long format
+mal_incidence_long = pd.melt(
+    mal_incidence,
+    id_vars=["country"],
+    var_name="year",
+    value_name="malaria_incidence_per_100k",
+)
+urban_long = pd.melt(
+    urban_per, id_vars=["country"], var_name="year", value_name="urban_percent"
+)
+pop_long = pd.melt(
+    population, id_vars=["country"], var_name="year", value_name="population"
+)
+# Convert year to integer
+mal_incidence_long["year"] = mal_incidence_long["year"].astype(int)
+urban_long["year"] = urban_long["year"].astype(int)
+pop_long["year"] = pop_long["year"].astype(int)
+```
+
+```{python}
+# Define a function to parse numeric strings with K, M suffixes
+def parse_number(val):
+    if isinstance(val, str):
+        val = val.strip().lower().replace(",", "")
+        if "k" in val:
+            return float(val.replace("k", "")) * 1_000
+        elif "m" in val:
+            return float(val.replace("m", "")) * 1_000_000
+        else:
+            try:
+                return float(val)
+            except ValueError:
+                return np.nan
+    return val
+
+# Apply this function to malaria_cases
+pop_long["population"] = pop_long["population"].apply(parse_number)
+```
+
+```{python}
+# Merge datasets
+urban_pop_joined = pd.merge(urban_long, pop_long, on=["country", "year"])
+malaria_urban_joined = pd.merge(
+    mal_incidence_long, urban_pop_joined, on=["country", "year"]
+)
+```
+
+```{python}
+# Enable “copy-on-write” mode
+pd.set_option("mode.copy_on_write", True)
+
+# Add regional information
+malaria_urban_joined["continent"] = cc.convert(
+    names=malaria_urban_joined["country"], to="continent"
+)
+```
+
+```{python}
+# Convert the 'malaria_incidence_per_100k' column to numeric
+malaria_urban_joined["malaria_incidence_per_100k"] = pd.to_numeric(
+    malaria_urban_joined["malaria_incidence_per_100k"], errors="coerce"
+)
+# Remove rows with missing values in the specified columns
+malaria_urban_cleaned = malaria_urban_joined.dropna(
+    subset=["malaria_incidence_per_100k", "year", "continent"]
+)
+```
+
+```{python}
+# Drop the year of 2006 from the dataframe
+malaria_urban_1990_2005 = malaria_urban_cleaned[malaria_urban_cleaned["year"] != 2006]
+```
+
+```{python}
+# Find the year with the highest total malaria incidence
+peak_year = (
+    malaria_urban_1990_2005.groupby("year")["malaria_incidence_per_100k"].sum().idxmax()
+)
+```
+
+```{python}
+# Get the row with the highest malaria incidence per 100k
+highest_value = malaria_urban_1990_2005.sort_values(
+    "malaria_incidence_per_100k", ascending=False
+).iloc[0]
+
+# Prepare values for boxes
+high_country = highest_value["country"]
+high_value = highest_value["malaria_incidence_per_100k"]
+high_year = int(highest_value["year"])
+
+# Pre-compute values
+high_country = highest_value["country"]
+high_year = int(highest_value["year"])
+high_val = highest_value["malaria_incidence_per_100k"]
+```
+
+```{python}
+# Total malaria incidence in 1990 (per 100k population)
+cases_1990 = malaria_urban_1990_2005[malaria_urban_1990_2005["year"] == 1990][
+    "malaria_incidence_per_100k"
+].sum()
+
+# Total malaria incidence in 2005 (per 100k population)
+cases_2005 = malaria_urban_1990_2005[malaria_urban_1990_2005["year"] == 2005][
+    "malaria_incidence_per_100k"
+].sum()
+
+# Calculate percentage decline from 1990 to 2005
+pct_decline = ((cases_1990 - cases_2005) / cases_1990) * 100
+```
+
+# Malaria Incidence (1990-2005)
+## {height="20%"}
+:::{.valuebox title="Peak Year" color="warning" icon="alarm"}
+`{python} f"{peak_year}"`
+:::
+
+:::{.valuebox title="Highest Incidence in 100k" color="danger" icon="arrow-up"}
+`{python} f"{high_val} in {high_country} in {high_year}"`
+:::
+
+:::{.valuebox title="Decline (1990–2005)" color="success" icon="arrow-down-right-circle-fill"}
+`{python} f"{pct_decline:.1f}%"`
+:::
+
+## Row {height="50%"}
+### Column {width="40%"}
+
+```{python}
+# Scatterplot malaria incidence over the years by continents
+fig_1 = px.scatter(
+    malaria_urban_1990_2005,
+    y="year",
+    x="malaria_incidence_per_100k",
+    color="continent",
+    size="malaria_incidence_per_100k",
+    labels={"malaria_incidence_per_100k": "Malaria incidence (/100k)", "year": "Year"},
+    hover_name="country",
+    facet_col="continent",
+    facet_col_wrap=2,
+    title="Malaria Incidence per 100k vs Year(1990-2005) by Continent)",
+)
+fig_1.update_layout(
+    title=dict(
+        text="Trends in Malaria Incidence by Continent (1990–2005)",
+        font=dict(
+            family="Arial",
+            size=16,
+            color="black",
+        ),
+        x=0.5,
+        xanchor="center",
+    ),
+    legend=dict(visible=False),
+)
+```
+
+
+### Column {width="60%"}
+
+```{python}
+# Create an animated map for malaria incidence over the years
+fig_2 = px.choropleth(
+    malaria_urban_1990_2005,
+    locations="country",
+    locationmode="country names",
+    color="malaria_incidence_per_100k",
+    hover_name="country",
+    animation_frame="year",
+    color_continuous_scale="Reds",
+    title="Malaria Incidence per 100k (Worldwide, Animated by Year)",
+    range_color=(0, malaria_urban_1990_2005["malaria_incidence_per_100k"].max()),
+    labels={"malaria_incidence_per_100k": "Malaria Incidence (/100k)"},
+)
+
+fig_2.update_layout(
+    geo=dict(showframe=False, showcoastlines=False),
+    margin={"r": 0, "t": 50, "l": 0, "b": 0},
+    title=dict(
+        text="Mean Malaria Incidence per 100k Population (1990–2005)",
+        font=dict(family="Arial", size=16, color="black"),
+        x=0.5,
+        xanchor="center",
+    ),
+    updatemenus=[{
+        "type": "buttons",
+        "showactive": False,
+        "buttons": [
+            {
+                "label": "Play",
+                "method": "animate",
+                "args": [None, {
+                    "frame": {"duration": 1500, "redraw": True},
+                    "transition": {"duration": 500},
+                    "fromcurrent": True,
+                    "mode": "immediate"
+                }]
+            },
+            {
+                "label": "Pause",
+                "method": "animate",
+                "args": [[None], {
+                    "frame": {"duration": 0, "redraw": False},
+                    "mode": "immediate",
+                    "transition": {"duration": 0}
+                }]
+            }
+        ]
+    }]
+)
+```
+
+## Row {height="30%"}
+### {width="50%"}
+
+```{python}
+# Group by country and get the maximum incidence for each country
+country_max_incidence = malaria_urban_1990_2005.groupby("country")[
+    "malaria_incidence_per_100k"
+].max()
+
+# Sort values in descending order and take top 10
+top10_countries = country_max_incidence.sort_values(ascending=False).head(10)
+
+# Create top ten dataframe
+top10_df = top10_countries.reset_index()
+top10_df.columns = ["country", "max_incidence"]
+
+# Create a plot for top ten countries
+
+fig_3 = px.bar(
+    top10_df,
+    x="country",
+    y="max_incidence",
+    labels={"max_incidence": "Max Malaria Incidence per 100k", "country": "Country"},
+    color="country",
+)
+fig_3.update_layout(
+    title=dict(
+        text="Top 10 Countries by Highest Malaria Incidence",
+        font=dict(
+            family="Arial",
+            size=16,
+            color="black",
+        ),
+        x=0.5,
+        xanchor="center",
+    ),
+    legend=dict(visible=False),
+    xaxis=dict(tickangle=45),
+)
+```
+
+### {width="50%"}
+
+```{python}
+# Find rows with the maximum incidence per continent
+max_inc_by_continent = malaria_urban_1990_2005.loc[
+    malaria_urban_1990_2005.groupby("continent")["malaria_incidence_per_100k"].idxmax(),
+    ["continent", "country", "year", "malaria_incidence_per_100k"],
+].sort_values("continent")
+max_inc_by_continent = max_inc_by_continent.rename(
+    columns={"malaria_incidence_per_100k": "Malaria Incidence per 100k"}
+)
+
+# Capitalize the column names
+max_inc_by_continent.columns = [
+    col.capitalize() for col in max_inc_by_continent.columns
+]
+
+# Display a title
+print("Maximum Malaria Incidence by Continent (1990–2005)")
+
+# Display the table
+display(max_inc_by_continent)
+```
+
+# Regional Focus  
+
+## {height="20%"}
+::: {.valuebox color="#f5dc1d" icon="sun"}
+AFRICA 
+:::
+::: {.valuebox color="#27b00b" icon="tropical-storm"}
+ASIA
+:::
+::: {.valuebox color="#1736e5" icon="globe-americas"}
+AMERICA
+:::
+
+## {height="40%"}
+### Column {width="34%"}
+
+```{python}
+# Filter data for  Africa
+africa_df = malaria_urban_1990_2005[malaria_urban_1990_2005["continent"] == "Africa"]
+# Calculate mean malaria incidence per country
+mean_incidence_africa = (
+    africa_df.groupby("country")["malaria_incidence_per_100k"].mean().reset_index()
+)
+
+# Create a map for mean incidences in Africa
+fig_4 = px.choropleth(
+    mean_incidence_africa,
+    locations="country",
+    locationmode="country names",
+    color="malaria_incidence_per_100k",
+    color_continuous_scale="Reds",
+    labels={"malaria_incidence_per_100k": "Mean Incidence per 100k"},
+    scope="africa",
+)
+fig_4.update_layout(
+    title=dict(
+        text="Mean Malaria Incidence per 100k Population in Africa (1990-2005)",
+        font=dict(
+            family="Arial",
+            size=17,
+            color="black",
+        ),
+        x=0.5,
+        xanchor="center",
+    )
+)
+```
+
+### Column {width="33%"}
+
+```{python}
+# Filter data for  Asia
+asia_df = malaria_urban_1990_2005[malaria_urban_1990_2005["continent"] == "Asia"]
+# Calculate mean malaria incidence per country
+mean_incidence_asia = (
+    asia_df.groupby("country")["malaria_incidence_per_100k"].mean().reset_index()
+)
+
+# Create a map for mean incidences in Asia
+fig_5 = px.choropleth(
+    mean_incidence_asia,
+    locations="country",
+    locationmode="country names",
+    color="malaria_incidence_per_100k",
+    color_continuous_scale="Reds",
+    labels={"malaria_incidence_per_100k": "Mean Incidence per 100k"},
+    scope="asia",
+)
+
+fig_5.update_layout(
+    title=dict(
+        text="Mean Malaria Incidence per 100k Population in Asia (1990-2005)",
+        font=dict(
+            family="Arial",
+            size=16,
+            color="black",
+        ),
+        x=0.5,
+        xanchor="center",
+    )
+)
+```
+
+### Column {width="33%"}
+
+```{python}
+# Filter data for  Africa
+america_df = malaria_urban_1990_2005[malaria_urban_1990_2005["continent"] == "America"]
+# Calculate mean malaria incidence per country
+mean_incidence_america_df = (
+    america_df.groupby("country")["malaria_incidence_per_100k"].mean().reset_index()
+)
+
+# Create a map for mean incidences in Africa
+fig_6 = px.choropleth(
+    mean_incidence_america_df,
+    locations="country",
+    locationmode="country names",
+    color="malaria_incidence_per_100k",
+    color_continuous_scale="Reds",
+    labels={"malaria_incidence_per_100k": "Mean Incidence per 100k"},
+    scope="south america",
+)
+fig_6.update_layout(
+    title=dict(
+        text="Mean Malaria Incidence per 100k Population in America (1990-2005)",
+        font=dict(
+            family="Arial",
+            size=16,
+            color="black",
+        ),
+        x=0.5,
+        xanchor="center",
+    )
+)
+```
+
+## ## {height="40%"}
+### Column {width="50%"}
+
+```{python}
+# Calculate mean incidence per continent per year
+mean_incidence_by_continent = (
+    malaria_urban_1990_2005.groupby(["continent", "year"])["malaria_incidence_per_100k"]
+    .mean()
+    .reset_index()
+)
+
+# Filter for Africa Asia and America
+mean_incidence_by_continent = mean_incidence_by_continent[
+    mean_incidence_by_continent["continent"].isin(["Africa", "Asia", "America"])
+]
+# Create a line chart
+fig_7 = px.line(
+    mean_incidence_by_continent,
+    x="year",
+    y="malaria_incidence_per_100k",
+    color="continent",
+    labels={
+        "year": "Year",
+        "malaria_incidence_per_100k": "Mean Incidence per 100k",
+        "continent": "Continent",
+    },
+)
+fig_7.update_layout(
+    title=dict(
+        text="Average Malaria Incidence per 100k Population (1990-2005)",
+        font=dict(
+            family="Arial",
+            size=16,
+            color="black",
+        ),
+        x=0.5,
+        xanchor="center",        
+    ),
+    legend=dict(
+        orientation="h", 
+        entrywidth=70, 
+        yanchor="bottom", 
+        y=1.02, 
+        xanchor="right", x=1
+    ),    
+)
+```
+
+### Column {width="50%"}
+**Key Insights**
+
+Africa bears a significant burden of malaria, with many countries experiencing consistently high incidence rates throughout the years. In contrast, Asia and America display more varied malaria patterns. 
+
+Over the 15-year period from 1990 to 2005, although there were sharp declines in malaria incidence at certain points, the overall number of cases increased by the end of the period in **Africa**
+
+The malaria trend in **America** showed a rise and fall similar to that observed in Africa, but on a smaller scale—ultimately resulting in more malaria cases by the end of the 15 years.
+
+**Asia**, on the other hand, followed a different trajectory. Unlike the other regions, malaria incidence in Asia generally declined over the entire period, ending with significantly fewer cases in 2005 compared to 1990.
+
+# Urbanization Levels (1990–2005)
+
+```{python}
+# Filter the dataframe
+urban_df = malaria_urban_1990_2005.dropna(subset=['population', 'urban_percent'])
+```
+
+## {height="40%"}
+
+```{python}
+# Create a map to show urbanization percentage by country
+fig_8 = px.choropleth(
+    urban_df,
+    locations="country",
+    locationmode="country names",
+    color="urban_percent",
+    animation_frame="year",
+    color_continuous_scale="YlGnBu",
+    range_color=(urban_df["urban_percent"].min(), urban_df["urban_percent"].max()),
+    labels={"urban_percent": "Urbanization (%)"},
+)
+
+fig_8.update_layout(
+    title_text="Urbanization Percentage by Country Over Time (1990-2005)",
+    geo=dict(showframe=False, showcoastlines=False),
+    margin={"r": 60, "t": 50, "l": 0, "b": 0},
+    coloraxis_colorbar=dict(
+        title=dict(
+            text="Urban (%)",
+            font=dict(size=16)
+        ),
+        thickness=10,
+        len=0.5,
+        tickfont=dict(size=10),
+    ),
+    updatemenus=[{
+        "type": "buttons",
+        "showactive": False,
+        "buttons": [
+            {
+                "label": "Play",
+                "method": "animate",
+                "args": [None, {
+                    "frame": {"duration": 1500, "redraw": True},
+                    "transition": {"duration": 500},
+                    "fromcurrent": True,
+                    "mode": "immediate"
+                }]
+            },
+            {
+                "label": "Pause",
+                "method": "animate",
+                "args": [[None], {
+                    "frame": {"duration": 0, "redraw": False},
+                    "mode": "immediate",
+                    "transition": {"duration": 0}
+                }]
+            }
+        ]
+    }]
+)
+```
+
+## {height="30%"}
+
+### Column {.tabset width="50%"}
+
+
+```{python}
+# Filter and aggregate
+df_filtered = malaria_urban_1990_2005[
+    malaria_urban_1990_2005["year"].isin([1990, 1995, 2005])
+].dropna(subset=["population", "urban_percent", "continent"])
+
+df_grouped = df_filtered.groupby(["continent", "year"], as_index=False).agg(
+    {"population": "sum", "urban_percent": "mean"}
+)
+
+# Function to create dual-axis plot
+def create_dual_axis_fig(continent):
+    df_c = df_grouped[df_grouped["continent"] == continent]
+
+    fig = go.Figure()
+
+    # Population trace
+    fig.add_trace(
+        go.Scatter(
+            x=df_c["year"],
+            y=df_c["population"] / 1_000_000,
+            name="Population (millions)",
+            mode="lines+markers",
+            line=dict(color="blue"),
+            yaxis="y1",
+        )
+    )
+
+    # Urbanization trace
+    fig.add_trace(
+        go.Scatter(
+            x=df_c["year"],
+            y=df_c["urban_percent"],
+            name="Urban Population (%)",
+            mode="lines+markers",
+            line=dict(color="orange", dash="dot"),
+            yaxis="y2",
+        )
+    )
+
+    fig.update_layout(
+        title=f"Population vs Urbanization Percentage in {continent} (1990–2005)",
+        xaxis=dict(title="Year"),
+        yaxis=dict(title="Population (millions)", side="left"),
+        yaxis2=dict(
+            title="Urbanization (%)", overlaying="y", side="right", range=[0, 100]
+        ),   
+        legend=dict(
+            orientation="h", 
+            entrywidth=70, 
+            yanchor="bottom", 
+            y=1.02, 
+            xanchor="right", x=1
+        ),
+)
+
+    return fig
+
+# Create figures
+fig_af = create_dual_axis_fig("Africa")
+fig_as = create_dual_axis_fig("Asia")
+fig_am = create_dual_axis_fig("America")
+
+```
+
+#### Tab 1 
+```{python}
+fig_af.show()
+```
+
+#### Tab 2
+```{python}
+fig_as.show()
+```
+
+#### Tab 3
+```{python}
+fig_am.show()
+```
+
+### Column {width="50%"}
+```{python}
+# Calculate average malaria incidence per country
+mean_df = urban_df.groupby("country", as_index=False).agg({
+    "malaria_incidence_per_100k": "mean",
+    "urban_percent": "mean"
+})
+
+# Get top 10 countries with highest mean malaria incidence
+top10_malaria = mean_df.nlargest(10, "malaria_incidence_per_100k")
+
+# Plot their mean urbanization percentages
+fig_9 = px.bar(
+    top10_malaria,
+    x="country",
+    y="urban_percent",
+    color="urban_percent",
+    color_continuous_scale="YlGnBu",
+    title="Urbanization Rate in Highest Malaria Countries",
+    labels={
+        "urban_percent": "Mean Urbanization (%)",
+        "country": "Country"
+    }
+)
+
+fig_9.update_layout(
+    xaxis_tickangle=-45,
+    yaxis_title="Mean Urbanization (%)",
+    xaxis_title="Country"
+)
+```
+
+
+```{python}
+# Valueboxes
+
+# Rebuild 1990 and 2005 subsets
+df_1990 = malaria_urban_1990_2005[malaria_urban_1990_2005["year"] == 1990][
+    ["country", "malaria_incidence_per_100k"]
+]
+
+df_2005 = malaria_urban_1990_2005[malaria_urban_1990_2005["year"] == 2005][
+    ["country", "malaria_incidence_per_100k", "urban_percent"]
+]
+
+# Merge data
+df_merged = pd.merge(df_1990, df_2005, on="country", suffixes=("_1990", "_2005"))
+
+# Drop rows where denominator would be 0 or where urban is missing
+df_merged = df_merged.dropna(
+    subset=["urban_percent", "malaria_incidence_per_100k_1990"]
+)
+df_merged = df_merged[df_merged["malaria_incidence_per_100k_1990"] != 0]
+
+# Calculate malaria % change
+df_merged["malaria_pct_change"] = (
+    (
+        df_merged["malaria_incidence_per_100k_2005"]
+        - df_merged["malaria_incidence_per_100k_1990"]
+    )
+    / df_merged["malaria_incidence_per_100k_1990"]
+) * 100
+
+df_declined = df_merged[df_merged["malaria_pct_change"] <= -50]
+avg_urban_percent = df_declined["urban_percent"].mean()
+
+# Filter: High urbanization + Increasing malaria
+high_urban_rising_malaria = df_merged[
+    (df_merged["urban_percent"] > 70) & (df_merged["malaria_pct_change"] > 0)
+][["country", "urban_percent", "malaria_pct_change"]]
+
+top_country = high_urban_rising_malaria.sort_values(
+    by="malaria_pct_change", ascending=False
+).iloc[0]
+top_country_name = top_country["country"]
+top_malaria_change = top_country["malaria_pct_change"]
+
+# Calculate correlation
+corr = df_merged["urban_percent"].corr(
+    malaria_urban_1990_2005["malaria_incidence_per_100k"]
+)
+```
+
+
+# Malaria and Urbanization Analysis 
+## {height="20%"}
+:::{.valuebox title="Avg Urbanization in Countries with >50% Malaria Decline" color="secondary" icon="alarm"}
+`{python} f"{avg_urban_percent:.1f}"`
+:::
+:::{.valuebox title="High Urbanization & Rising Malaria" color="warning" icon="arrow-up-square"}
+`{python} f"{top_country['country']} (+{top_country['malaria_pct_change']:.1f}%)"`
+:::
+
+:::{.valuebox title="Correlation between Urbanization & Malaria:" color="success" icon="check2-circle"}
+`{python} f"{corr:.2f}"`
+:::
+
+## {height="40%"}
+### Column {width="50%"}
+
+```{python}
+# Get unique continent names (excluding missing values)
+continents = malaria_urban_1990_2005["continent"].dropna().unique()
+
+# Create a 2x3 grid of subplots with shared axes
+fig, axs = plt.subplots(nrows=2, ncols=3, figsize=(15, 8), sharex=True, sharey=True)
+axs = axs.flatten()
+
+# Loop through each continent and create scatter plots
+for i, continent in enumerate(sorted(continents)):
+    subset = malaria_urban_1990_2005[malaria_urban_1990_2005["continent"] == continent]
+
+    axs[i].scatter(
+        subset["urban_percent"],
+        subset["malaria_incidence_per_100k"],
+        alpha=0.6,
+        color="steelblue",
+    )
+    _ = axs[i].set_title(continent)
+    _ = axs[i].set_xlabel("Urban %")
+    _ = axs[i].set_ylabel("Malaria Incidence")
+
+# ✅ Turn off any extra unused subplot(s)
+for j in range(len(continents), len(axs)):
+    axs[j].set_visible(False)
+
+# Layout adjustment and suptitle
+fig.tight_layout(rect=[0, 0, 1, 0.93])
+_ = fig.suptitle("Urbanization vs Malaria Cases by Continent", fontsize=16, y=1.02)
+
+plt.show()
+```
+
+### Column {width="50%"}
+
+```{python}
+
+# Facet scatter plots for selected years
+selected_years = [1990, 1995, 2000, 2005]
+
+# Create subplot grid: 2 rows, 2 columns
+fig2, axs2 = plt.subplots(2, 2, figsize=(12, 8), sharey=True)
+axs2 = axs2.flatten()  # Flatten to access subplots as a 1D list
+
+# Loop through each year and plot urbanization vs malaria incidence
+for i, year in enumerate(selected_years):
+    subset = malaria_urban_1990_2005[malaria_urban_1990_2005["year"] == year]
+    axs2[i].scatter(
+        subset["urban_percent"],
+        subset["malaria_incidence_per_100k"],
+        alpha=0.6,
+        color="darkgreen",
+    )
+    _ = axs2[i].set_title(f"Year: {year}")
+    _ = axs2[i].set_xlabel("Urban %")
+    _ = axs2[i].set_ylabel("Malaria Cases")
+
+# Adjust layout and title
+fig2.tight_layout(rect=[0, 0, 1, 0.93])
+_ = fig2.suptitle("Urbanization vs Malaria Cases Over Time", fontsize=16, y=1.02)
+
+plt.show()
+```
+
+
+```{python}
+# write a function to define urbanization category
+def urban_classify(urban_pct):
+    if urban_pct > 70:
+        return "High Urbanization"
+    elif urban_pct < 30:
+        return "Low Urbanization"
+    else:
+        return "Medium Urbanization"
+
+# Vectorize the function
+vectorized_urban_classify = np.vectorize(urban_classify)
+
+# Apply it to the column
+malaria_urban_1990_2005['urban_group'] = vectorized_urban_classify(malaria_urban_1990_2005['urban_percent'])
+
+# Create a list dictionary for colors
+color_map = {
+    "High Urbanization": "#ef0f6e",
+    "Low Urbanization": "#04bdb3"
+}
+```
+
+## {height="40%"}
+### Column {width="50%"}
+
+```{python}
+# Create an animated scatter plot 
+fig_10 = px.scatter(
+    malaria_urban_1990_2005,
+    x="urban_percent",
+    y="malaria_incidence_per_100k",
+    animation_frame="year",
+    color="malaria_incidence_per_100k",
+    hover_name="country",
+    labels={
+        "urban_percent": "Urbanization Percentage (%)",
+        "malaria_incidence_per_100k": "Malaria Cases per 100k",
+    },
+    title="Malaria vs Urbanization: Country Trends Over Time",
+    range_x=[0, 100], 
+    range_y=[0, malaria_urban_1990_2005["malaria_incidence_per_100k"].max()],
+)
+
+fig_10.update_layout(
+    xaxis_title="Urbanization Percentage (%)",
+    yaxis_title="Malaria Cases per 100k",
+    title_font=dict(size=16),
+    updatemenus=[
+        {
+            "type": "buttons",
+            "showactive": False,
+            "buttons": [
+                {
+                    "label": "Play",
+                    "method": "animate",
+                    "args": [
+                        None,
+                        {
+                            "frame": {"duration": 1500, "redraw": True},
+                            "transition": {"duration": 500},
+                            "fromcurrent": True,
+                            "mode": "immediate",
+                        },
+                    ],
+                },
+                {
+                    "label": "Pause",
+                    "method": "animate",
+                    "args": [
+                        [None],
+                        {
+                            "frame": {"duration": 0, "redraw": False},
+                            "mode": "immediate",
+                            "transition": {"duration": 0},
+                        },
+                    ],
+                },
+            ],
+        }
+    ],
+)
+
+```
+
+
+### Column {.tabset width="50%"}
+#### Tab 1
+```{python}
+# Subset the data
+df_continent_africa = malaria_urban_1990_2005[
+    malaria_urban_1990_2005["continent"] == "Africa"
+]
+
+# Filter only high and low groups
+df_continent_africa_filtered = df_continent_africa[
+    df_continent_africa["urban_group"].isin(["High Urbanization", "Low Urbanization"])
+]
+
+fig_11 = px.box(
+    df_continent_africa_filtered,
+    x="urban_group",
+    y="malaria_incidence_per_100k",
+    color="urban_group",
+    color_discrete_map=color_map,
+    category_orders={"urban_group": ["High Urbanization", "Low Urbanization"]},
+    title="Malaria Incidence in Africa: High vs Low Urbanization",
+    labels={
+        "urban_group": "Urbanization Level",
+        "malaria_incidence_per_100k": "Malaria Incidence (per 100k)",
+    },
+    points="all",
+)
+fig_11.update_layout(showlegend=False)
+```
+
+#### Tab 2
+```{python}
+# Subset the data
+df_continent_asia = malaria_urban_1990_2005[
+    malaria_urban_1990_2005["continent"] == "Asia"
+]
+
+# Filter only high and low groups
+df_continent_asia_filtered = df_continent_asia[
+    df_continent_asia["urban_group"].isin(["High Urbanization", "Low Urbanization"])
+]
+
+fig_12 = px.box(
+    df_continent_asia_filtered,
+    x="urban_group",
+    y="malaria_incidence_per_100k",
+    color="urban_group",
+    color_discrete_map=color_map,
+    category_orders={"urban_group": ["High Urbanization", "Low Urbanization"]},
+    title="Malaria Incidence in Asia: High vs Low Urbanization",
+    labels={
+        "urban_group": "Urbanization Level",
+        "malaria_incidence_per_100k": "Malaria Incidence (per 100k)",
+    },
+    points="all",
+)
+fig_12.update_layout(showlegend=False)
+```
+
+#### Tab 3
+
+```{python}
+# Subset the data
+df_continent_america = malaria_urban_1990_2005[
+    malaria_urban_1990_2005["continent"] == "America"
+]
+
+# Filter only high and low groups
+df_continent_america_filtered = df_continent_america[
+    df_continent_america["urban_group"].isin(["High Urbanization", "Low Urbanization"])
+]
+
+fig_13 = px.box(
+    df_continent_america_filtered,
+    x="urban_group",
+    y="malaria_incidence_per_100k",
+    color="urban_group",
+    category_orders={"urban_group": ["High Urbanization", "Low Urbanization"]},
+    color_discrete_map=color_map,
+    title="Malaria Incidence in America: High vs Low Urbanization",
+    labels={
+        "urban_group": "Urbanization Level",
+        "malaria_incidence_per_100k": "Malaria Incidence (per 100k)",
+    },
+    points="all",
+)
+fig_13.update_layout(showlegend=False)
+```
+
+# Summary of Findings
+
+**Insights on Malaria Incidence and Urbanization**
+
+
+**Africa** stands out as the region with the highest malaria burden, where many countries experience very high incidence rates even in moderately or highly urbanized areas. 
+Generally, malaria incidence tends to be higher in regions with low urbanization; however, some highly urbanized areas also report elevated malaria rates. This indicates that urbanization alone is not enough to reduce malaria without concurrent investments in infrastructure, healthcare, and vector control measures.
+
+Among African countries, Gabon stands out as a highly urbanized country with a persistently high malaria incidence. For more detailed insights into Gabon's malaria situation, see the [ScienceDirect article](https://www.sciencedirect.com/science/article/pii/S1876034124001886).
+
+In contrast, **the Americas** and **Asia** display a clearer negative relationship between urbanization and malaria incidence. As urbanization increases, malaria rates tend to decrease significantly in these regions. However, the correlation observed in the dataset is very weak, indicating that urbanization alone does not fully explain the variation in malaria incidence.
+
+**Europe** and **Oceania** show limited data. Europe has virtually eliminated malaria, which aligns with its high urbanization and robust health systems. Oceania exhibits sporadic malaria cases, mostly concentrated in less urbanized countries or territories.
+
+Over the period from 1990 to 2005, although malaria incidence increased in some continents, it has generally declined globally, while urbanization levels have seen a slight rise across continents.
+
+
+
